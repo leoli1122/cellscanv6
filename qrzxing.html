@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>QR Scanner · ZXing</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+:root {
+  --bg:#0a0a0a; --surface:#141414; --surface2:#1e1e1e; --border:#2a2a2a;
+  --accent:#00e5ff; --ok:#00e676; --warn:#ff5252;
+  --text:#f0f0f0; --muted:#666;
+  --font-mono:'IBM Plex Mono',monospace; --font-sans:'IBM Plex Sans',sans-serif;
+  --safe-top:env(safe-area-inset-top,0px); --safe-bot:env(safe-area-inset-bottom,0px);
+}
+html,body { width:100%; height:100%; overflow:hidden; background:var(--bg); color:var(--text); font-family:var(--font-sans); -webkit-font-smoothing:antialiased; }
+#app { width:100%; height:100%; display:flex; flex-direction:column; padding-top:var(--safe-top); padding-bottom:var(--safe-bot); }
+#header { flex-shrink:0; display:flex; align-items:center; justify-content:space-between; padding:12px 20px 8px; border-bottom:1px solid var(--border); }
+.header-left { display:flex; align-items:center; gap:10px; }
+.logo-mark { width:32px; height:32px; border:2px solid var(--accent); border-radius:6px; display:flex; align-items:center; justify-content:center; position:relative; }
+.logo-mark::before,.logo-mark::after { content:''; position:absolute; background:var(--accent); }
+.logo-mark::before { width:10px; height:2px; }
+.logo-mark::after  { width:2px; height:10px; }
+.header-title { font-family:var(--font-mono); font-size:13px; font-weight:600; letter-spacing:.08em; }
+.header-sub   { font-size:10px; color:var(--muted); font-family:var(--font-mono); letter-spacing:.05em; }
+.header-right { display:flex; gap:8px; }
+.icon-btn { width:36px; height:36px; border:1px solid var(--border); border-radius:8px; background:var(--surface2); display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:16px; transition:border-color .15s,background .15s; -webkit-user-select:none; }
+.icon-btn:active   { background:var(--surface); }
+.icon-btn.active   { border-color:var(--accent); background:rgba(0,229,255,.08); }
+.icon-btn.torch-on { border-color:#FFD54F; background:rgba(255,213,79,.08); }
+#status-bar { flex-shrink:0; display:flex; align-items:center; gap:8px; padding:8px 20px; }
+.status-dot { width:6px; height:6px; border-radius:50%; background:var(--muted); transition:background .3s; flex-shrink:0; }
+.status-dot.scanning { background:var(--accent); animation:pulse-dot 1.4s ease-in-out infinite; }
+.status-dot.found    { background:var(--ok); }
+.status-dot.error    { background:var(--warn); }
+@keyframes pulse-dot { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(1.4)} }
+#status-text { font-family:var(--font-mono); font-size:11px; color:var(--muted); letter-spacing:.05em; transition:color .3s; }
+#status-text.scanning { color:var(--accent); }
+#status-text.found    { color:var(--ok); }
+#status-text.error    { color:var(--warn); }
+.fps-badge { margin-left:auto; font-family:var(--font-mono); font-size:10px; color:var(--muted); background:var(--surface2); border:1px solid var(--border); border-radius:4px; padding:2px 7px; }
+#viewport { flex:1; position:relative; overflow:hidden; background:#000; max-height:calc(100% - 280px); }
+#video { width:100%; height:100%; object-fit:cover; display:block; }
+#overlay-canvas { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+.vp-frame { position:absolute; inset:0; pointer-events:none; }
+.frame-corner { position:absolute; width:24px; height:24px; border-color:var(--accent); border-style:solid; opacity:.9; }
+.frame-corner.tl { top:20%; left:15%; border-width:3px 0 0 3px; border-radius:4px 0 0 0; }
+.frame-corner.tr { top:20%; right:15%; border-width:3px 3px 0 0; border-radius:0 4px 0 0; }
+.frame-corner.bl { bottom:20%; left:15%; border-width:0 0 3px 3px; border-radius:0 0 0 4px; }
+.frame-corner.br { bottom:20%; right:15%; border-width:0 3px 3px 0; border-radius:0 0 4px 0; }
+.vp-mask { position:absolute; inset:0; pointer-events:none; background:radial-gradient(ellipse 72% 68% at 50% 50%,transparent 0%,transparent 55%,rgba(0,0,0,.55) 100%); }
+.scan-line-wrap { position:absolute; top:20%; left:15%; right:15%; bottom:20%; overflow:hidden; pointer-events:none; }
+.scan-line { position:absolute; left:0; right:0; height:1px; background:linear-gradient(90deg,transparent,var(--accent),transparent); box-shadow:0 0 6px var(--accent); animation:scan-anim 2.2s ease-in-out infinite; }
+@keyframes scan-anim { 0%{top:0;opacity:1} 48%{top:100%;opacity:1} 50%{top:100%;opacity:0} 52%{top:0;opacity:0} 54%{top:0;opacity:1} 100%{top:0;opacity:1} }
+#focus-ring { position:absolute; width:60px; height:60px; border:2px solid var(--accent); border-radius:50%; transform:translate(-50%,-50%) scale(1.5); opacity:0; pointer-events:none; transition:opacity .1s,transform .25s; }
+#focus-ring.active { opacity:1; transform:translate(-50%,-50%) scale(1); }
+#success-flash { position:absolute; inset:0; background:rgba(0,230,118,.18); opacity:0; pointer-events:none; transition:opacity .08s; }
+#success-flash.flash { opacity:1; }
+#bottom-panel { flex-shrink:0; background:var(--surface); border-top:1px solid var(--border); padding:12px 20px; display:flex; flex-direction:column; gap:10px; }
+.btn-row { display:flex; gap:10px; }
+.btn { flex:1; padding:13px 0; border-radius:10px; border:1px solid var(--border); background:var(--surface2); color:var(--text); font-family:var(--font-mono); font-size:12px; font-weight:600; letter-spacing:.05em; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; transition:background .15s,border-color .15s,transform .1s; -webkit-user-select:none; }
+.btn:active { transform:scale(.97); background:var(--bg); }
+.btn:disabled { opacity:.35; cursor:not-allowed; }
+.btn.primary { background:var(--accent); border-color:var(--accent); color:#000; font-weight:700; }
+.btn.primary:active { background:#00bcd4; }
+.btn.danger { border-color:var(--warn); color:var(--warn); }
+#result-area { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:12px 14px; display:none; }
+#result-area.visible { display:block; }
+.result-label { font-family:var(--font-mono); font-size:9px; letter-spacing:.12em; color:var(--muted); text-transform:uppercase; margin-bottom:5px; }
+#result-value { font-family:var(--font-mono); font-size:14px; font-weight:600; color:var(--ok); word-break:break-all; line-height:1.4; }
+.result-actions { display:flex; gap:8px; margin-top:10px; }
+.result-actions .btn { padding:8px 0; font-size:11px; }
+#params-drawer { display:none; flex-direction:column; gap:10px; border-top:1px solid var(--border); padding-top:10px; }
+#params-drawer.visible { display:flex; }
+.drawer-title { font-family:var(--font-mono); font-size:9px; letter-spacing:.12em; color:var(--muted); text-transform:uppercase; }
+.param-item { display:flex; align-items:center; gap:10px; }
+.param-name { font-size:11px; color:var(--text); font-family:var(--font-mono); width:90px; flex-shrink:0; }
+input[type=range] { flex:1; height:3px; -webkit-appearance:none; background:var(--border); border-radius:2px; accent-color:var(--accent); }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; height:18px; border-radius:50%; background:var(--accent); cursor:pointer; box-shadow:0 0 6px rgba(0,229,255,.4); }
+.param-val { font-family:var(--font-mono); font-size:11px; color:var(--accent); width:40px; text-align:right; flex-shrink:0; }
+.toggle-item { display:flex; align-items:center; justify-content:space-between; }
+.toggle-name { font-size:11px; color:var(--text); font-family:var(--font-mono); }
+.sw { width:42px; height:24px; background:var(--border); border-radius:12px; position:relative; cursor:pointer; border:none; transition:background .2s; flex-shrink:0; }
+.sw.on { background:var(--ok); }
+.sw::after { content:''; position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; transition:left .2s; }
+.sw.on::after { left:21px; }
+#debug-wrap { display:none; border-top:1px solid var(--border); padding-top:10px; }
+#debug-wrap.visible { display:block; }
+.debug-label { font-family:var(--font-mono); font-size:9px; letter-spacing:.1em; color:var(--muted); margin-bottom:5px; }
+#debug-canvas { width:100%; border-radius:8px; image-rendering:pixelated; border:1px solid var(--border); }
+#history-wrap { display:none; border-top:1px solid var(--border); padding-top:10px; }
+#history-wrap.visible { display:block; }
+.history-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+.history-title { font-family:var(--font-mono); font-size:9px; letter-spacing:.12em; color:var(--muted); text-transform:uppercase; }
+.history-clear { font-size:11px; color:var(--warn); background:none; border:none; cursor:pointer; font-family:var(--font-mono); }
+#history-list { display:flex; flex-direction:column; gap:5px; max-height:120px; overflow-y:auto; }
+.hi-item { display:flex; align-items:center; gap:8px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:8px 10px; cursor:pointer; transition:border-color .15s; }
+.hi-item:active { border-color:var(--accent); }
+.hi-text { flex:1; font-family:var(--font-mono); font-size:11px; color:var(--text); word-break:break-all; }
+.hi-time { font-size:10px; color:var(--muted); white-space:nowrap; }
+/* 載入狀態 */
+#loading-overlay { position:fixed; inset:0; background:var(--bg); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; z-index:100; }
+#loading-overlay.hidden { display:none; }
+.loading-spinner { width:40px; height:40px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+.loading-text { font-family:var(--font-mono); font-size:12px; color:var(--muted); letter-spacing:.08em; }
+#toast { position:fixed; bottom:calc(var(--safe-bot) + 20px); left:50%; transform:translateX(-50%) translateY(60px); background:var(--ok); color:#000; font-family:var(--font-mono); font-size:12px; font-weight:600; padding:8px 20px; border-radius:20px; transition:transform .25s cubic-bezier(.34,1.56,.64,1); pointer-events:none; white-space:nowrap; z-index:999; }
+#toast.show { transform:translateX(-50%) translateY(0); }
+.hidden { display:none !important; }
+</style>
+</head>
+<body>
+
+<!-- 載入中 -->
+<div id="loading-overlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-text">載入 ZXing 解碼引擎…</div>
+</div>
+
+<div id="app">
+  <div id="header">
+    <div class="header-left">
+      <div class="logo-mark"></div>
+      <div>
+        <div class="header-title">QR SCANNER</div>
+        <div class="header-sub">ENGINE · ZXing-js</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="icon-btn" id="btn-torch">💡</div>
+      <div class="icon-btn" id="btn-debug-tog">🔍</div>
+      <div class="icon-btn" id="btn-params-tog">⚙️</div>
+      <div class="icon-btn" id="btn-history-tog">📋</div>
+    </div>
+  </div>
+
+  <div id="status-bar">
+    <div class="status-dot" id="sdot"></div>
+    <div id="status-text">就緒</div>
+    <div class="fps-badge" id="fps-badge">-- fps</div>
+  </div>
+
+  <div id="viewport">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay-canvas"></canvas>
+    <div class="vp-mask"></div>
+    <div class="vp-frame">
+      <div class="frame-corner tl"></div>
+      <div class="frame-corner tr"></div>
+      <div class="frame-corner bl"></div>
+      <div class="frame-corner br"></div>
+    </div>
+    <div class="scan-line-wrap"><div class="scan-line"></div></div>
+    <div id="focus-ring"></div>
+    <div id="success-flash"></div>
+  </div>
+
+  <div id="bottom-panel">
+    <div class="btn-row">
+      <button class="btn primary" id="btn-start" onclick="startScan()">▶ 開始掃描</button>
+      <button class="btn danger"  id="btn-stop"  onclick="stopScan()" disabled>⏹ 停止</button>
+      <label style="flex:1">
+        <button class="btn" style="width:100%" onclick="document.getElementById('file-in').click()">🖼 圖片</button>
+      </label>
+      <input type="file" id="file-in" accept="image/*" onchange="decodeFile(event)" class="hidden">
+    </div>
+
+    <div id="result-area">
+      <div class="result-label">DECODED RESULT</div>
+      <div id="result-value">—</div>
+      <div class="result-actions">
+        <button class="btn" onclick="copyResult()">📋 複製</button>
+        <button class="btn" onclick="clearResult()">✕ 清除</button>
+      </div>
+    </div>
+
+    <div id="params-drawer">
+      <div class="drawer-title">掃描參數</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div class="param-item">
+          <span class="param-name">對比度</span>
+          <input type="range" min="1" max="5" step="0.1" value="2"
+            oninput="P.contrast=+this.value;document.getElementById('v-c').textContent=this.value+'x'">
+          <span class="param-val" id="v-c">2x</span>
+        </div>
+        <div class="param-item">
+          <span class="param-name">Threshold</span>
+          <input type="range" min="40" max="220" value="128"
+            oninput="P.threshold=+this.value;document.getElementById('v-t').textContent=this.value">
+          <span class="param-val" id="v-t">128</span>
+        </div>
+        <div class="param-item">
+          <span class="param-name">自適應區塊</span>
+          <input type="range" min="0" max="80" step="4" value="32"
+            oninput="P.blockSize=+this.value;document.getElementById('v-b').textContent=this.value||'OFF'">
+          <span class="param-val" id="v-b">32</span>
+        </div>
+        <div class="param-item">
+          <span class="param-name">取樣間隔</span>
+          <input type="range" min="100" max="800" step="50" value="200"
+            oninput="P.interval=+this.value;document.getElementById('v-i').textContent=this.value+'ms'">
+          <span class="param-val" id="v-i">200ms</span>
+        </div>
+        <div class="toggle-item">
+          <span class="toggle-name">裁切中央 ROI</span>
+          <button class="sw on" id="sw-crop" onclick="P.crop=!P.crop;this.classList.toggle('on',P.crop)"></button>
+        </div>
+        <div class="toggle-item">
+          <span class="toggle-name">前處理（灰階+二值化）</span>
+          <button class="sw on" id="sw-pre" onclick="P.preprocess=!P.preprocess;this.classList.toggle('on',P.preprocess)"></button>
+        </div>
+        <div class="toggle-item">
+          <span class="toggle-name">清晰度過濾</span>
+          <button class="sw on" id="sw-blur" onclick="P.blurFilter=!P.blurFilter;this.classList.toggle('on',P.blurFilter)"></button>
+        </div>
+      </div>
+    </div>
+
+    <div id="debug-wrap">
+      <div class="debug-label">PREPROCESSED FRAME</div>
+      <canvas id="debug-canvas"></canvas>
+    </div>
+
+    <div id="history-wrap">
+      <div class="history-header">
+        <span class="history-title">掃描歷史</span>
+        <button class="history-clear" onclick="clearHistory()">全部清除</button>
+      </div>
+      <div id="history-list"></div>
+    </div>
+  </div>
+</div>
+
+<div id="toast">已複製</div>
+<canvas id="decode-canvas" class="hidden"></canvas>
+
+<!-- ZXing-js (ES Module via CDN) -->
+<script type="module">
+import { BrowserQRCodeReader, BrowserMultiFormatReader, DecodeHintType, BarcodeFormat }
+  from 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/esm/index.js';
+
+// ── 參數 ──
+const P = window.P = {
+  contrast:1.5, threshold:128, blockSize:32,
+  interval:200, crop:true, preprocess:true, blurFilter:true, blurThresh:80
+};
+
+let stream=null, scanning=false, rafId=null, torchOn=false;
+let showDebug=false, showParams=false, showHistory=false;
+let fpsHistory=[], lastTick=0;
+let history=[];
+try{ history=JSON.parse(localStorage.getItem('qr_h')||'[]'); }catch(e){}
+
+const video    = document.getElementById('video');
+const dc       = document.getElementById('decode-canvas');
+const dx       = dc.getContext('2d');
+const dbgC     = document.getElementById('debug-canvas');
+const dbgX     = dbgC.getContext('2d');
+const focusRing= document.getElementById('focus-ring');
+const flash    = document.getElementById('success-flash');
+
+// ── ZXing 初始化 ──
+// 使用 MultiFormatReader 獲得最大容錯
+const hints = new Map();
+hints.set(DecodeHintType.TRY_HARDER, true);
+hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]);
+
+const zxingReader = new BrowserMultiFormatReader(hints);
+
+// 載入完成，隱藏 loading
+document.getElementById('loading-overlay').classList.add('hidden');
+
+renderHistory();
+
+// ── 相機 ──
+async function startScan() {
+  try {
+    setStatus('scanning','啟動相機…');
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1440}, frameRate:{ideal:30} }
+    });
+    video.srcObject = stream;
+    await video.play();
+    scanning = true;
+    document.getElementById('btn-start').disabled = true;
+    document.getElementById('btn-stop').disabled  = false;
+    setStatus('scanning','掃描中');
+    rafId = requestAnimationFrame(loop);
+  } catch(e) { setStatus('error','相機錯誤：'+e.message); }
+}
+window.startScan = startScan;
+
+function stopScan() {
+  scanning = false;
+  if(rafId) cancelAnimationFrame(rafId);
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+  torchOn=false;
+  document.getElementById('btn-torch').classList.remove('torch-on');
+  document.getElementById('btn-start').disabled = false;
+  document.getElementById('btn-stop').disabled  = true;
+  setStatus('','就緒');
+  document.getElementById('fps-badge').textContent='-- fps';
+}
+window.stopScan = stopScan;
+
+// ── 主迴圈 ──
+function loop(ts) {
+  if(!scanning) return;
+  rafId = requestAnimationFrame(loop);
+  if(ts - lastTick < P.interval) return;
+
+  // FPS
+  fpsHistory.push(1000/(ts-lastTick));
+  if(fpsHistory.length>10) fpsHistory.shift();
+  document.getElementById('fps-badge').textContent =
+    Math.round(fpsHistory.reduce((a,b)=>a+b)/fpsHistory.length)+' fps';
+  lastTick = ts;
+
+  if(video.readyState < video.HAVE_ENOUGH_DATA) return;
+  const vw=video.videoWidth, vh=video.videoHeight;
+  if(!vw||!vh) return;
+
+  let sx=0,sy=0,sw=vw,sh=vh;
+  if(P.crop){ sx=vw*.15; sy=vh*.20; sw=vw*.70; sh=vh*.60; }
+
+  dc.width=sw; dc.height=sh;
+  dx.drawImage(video, sx,sy,sw,sh, 0,0,sw,sh);
+
+  // 清晰度過濾
+  if(P.blurFilter){
+    const raw = dx.getImageData(0,0,sw,sh);
+    const v = laplacianVariance(raw,sw,sh);
+    if(v < P.blurThresh){ setStatus('scanning','對焦中… ('+Math.round(v)+')'); return; }
+    setStatus('scanning','掃描中');
+  }
+
+  // 前處理
+  if(P.preprocess){
+    const imgData = dx.getImageData(0,0,sw,sh);
+    preprocess(imgData);
+    dx.putImageData(imgData,0,0);
+    if(showDebug){ dbgC.width=sw; dbgC.height=sh; dbgX.putImageData(imgData,0,0); }
+  }
+
+  // ── ZXing 解碼 ──
+  // ZXing 從 canvas 讀取（不需要原始 ImageData）
+  try {
+    const result = zxingReader.decodeFromCanvas(dc);
+    if(result) onDecoded(result.getText());
+  } catch(e) {
+    // NotFoundException 是正常的（未找到），忽略
+    // 其他錯誤才顯示
+    if(e && e.name !== 'NotFoundException' && !e.message?.includes('No MultiFormat')) {
+      // silent
+    }
+  }
+}
+
+// ── 前處理 ──
+function preprocess(imgData){
+  const d=imgData.data, w=imgData.width, h=imgData.height;
+  const c=P.contrast, mid=128;
+  for(let i=0;i<d.length;i+=4){
+    let g=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+    g=Math.min(255,Math.max(0,(g-mid)*c+mid));
+    d[i]=d[i+1]=d[i+2]=g;
+  }
+  if(P.blockSize>=4){ adaptiveThreshold(d,w,h,P.blockSize); }
+  else {
+    const t=P.threshold;
+    for(let i=0;i<d.length;i+=4){ const v=d[i]>=t?255:0; d[i]=d[i+1]=d[i+2]=v; }
+  }
+}
+
+function adaptiveThreshold(d,w,h,blockSize){
+  const half=Math.floor(blockSize/2);
+  const integral=new Float32Array((w+1)*(h+1));
+  for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+    const g=d[(y*w+x)*4];
+    integral[(y+1)*(w+1)+(x+1)]=g+integral[y*(w+1)+(x+1)]+integral[(y+1)*(w+1)+x]-integral[y*(w+1)+x];
+  }
+  for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+    const x1=Math.max(0,x-half),y1=Math.max(0,y-half);
+    const x2=Math.min(w-1,x+half),y2=Math.min(h-1,y+half);
+    const cnt=(x2-x1+1)*(y2-y1+1);
+    const sum=integral[(y2+1)*(w+1)+(x2+1)]-integral[y1*(w+1)+(x2+1)]-integral[(y2+1)*(w+1)+x1]+integral[y1*(w+1)+x1];
+    const idx=(y*w+x)*4;
+    d[idx]=d[idx+1]=d[idx+2]=(d[idx]<sum/cnt*0.85)?0:255;
+  }
+}
+
+function laplacianVariance(imgData,w,h){
+  const d=imgData.data, step=4;
+  let sum=0,sumSq=0,n=0;
+  for(let y=step;y<h-step;y+=step) for(let x=step;x<w-step;x+=step){
+    const i=(y*w+x)*4;
+    const g=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+    const gN=0.299*d[((y-step)*w+x)*4]+0.587*d[((y-step)*w+x)*4+1]+0.114*d[((y-step)*w+x)*4+2];
+    const gS=0.299*d[((y+step)*w+x)*4]+0.587*d[((y+step)*w+x)*4+1]+0.114*d[((y+step)*w+x)*4+2];
+    const gW=0.299*d[(y*w+x-step)*4]+0.587*d[(y*w+x-step)*4+1]+0.114*d[(y*w+x-step)*4+2];
+    const gE=0.299*d[(y*w+x+step)*4]+0.587*d[(y*w+x+step)*4+1]+0.114*d[(y*w+x+step)*4+2];
+    const lap=Math.abs(gN+gS+gW+gE-4*g);
+    sum+=lap; sumSq+=lap*lap; n++;
+  }
+  const mean=sum/n; return (sumSq/n)-mean*mean;
+}
+
+// ── 圖片解碼 ──
+window.decodeFile = function(event){
+  const file=event.target.files[0]; if(!file) return;
+  const img=new Image(), url=URL.createObjectURL(file);
+  img.onload=()=>{
+    dc.width=img.width; dc.height=img.height;
+    dx.drawImage(img,0,0);
+    if(P.preprocess){
+      const imgData=dx.getImageData(0,0,img.width,img.height);
+      preprocess(imgData); dx.putImageData(imgData,0,0);
+      if(showDebug){ dbgC.width=img.width; dbgC.height=img.height; dbgX.putImageData(imgData,0,0); }
+    }
+    URL.revokeObjectURL(url);
+    try {
+      const result = zxingReader.decodeFromCanvas(dc);
+      setStatus('found','✓ 圖片解碼成功');
+      showResult(result.getText()); addHistory(result.getText());
+    } catch(e) {
+      setStatus('error','未偵測到 QR code');
+    }
+  };
+  img.src=url; event.target.value='';
+};
+
+// ── 解碼成功 ──
+function onDecoded(data){
+  flash.classList.add('flash');
+  setTimeout(()=>flash.classList.remove('flash'),200);
+  if(navigator.vibrate) navigator.vibrate([40,30,40]);
+  setStatus('found','✓ 解碼成功');
+  showResult(data); addHistory(data);
+  scanning=false;
+  setTimeout(()=>{ if(stream){ scanning=true; setStatus('scanning','掃描中'); rafId=requestAnimationFrame(loop); } },1500);
+}
+
+// ── 手電筒 ──
+async function toggleTorch(){
+  if(!stream) return;
+  const track=stream.getVideoTracks()[0]; if(!track) return;
+  try{
+    torchOn=!torchOn;
+    await track.applyConstraints({advanced:[{torch:torchOn}]});
+    document.getElementById('btn-torch').classList.toggle('torch-on',torchOn);
+  }catch(e){ showToast('此裝置不支援手電筒'); torchOn=false; }
+}
+
+// ── 點擊對焦 ──
+document.getElementById('viewport').addEventListener('click', async function(e){
+  const rect=this.getBoundingClientRect();
+  const x=e.clientX-rect.left, y=e.clientY-rect.top;
+  focusRing.style.left=x+'px'; focusRing.style.top=y+'px';
+  focusRing.classList.add('active');
+  setTimeout(()=>focusRing.classList.remove('active'),800);
+  if(!stream) return;
+  const track=stream.getVideoTracks()[0]; if(!track) return;
+  try{
+    const caps=track.getCapabilities();
+    if(caps.focusMode?.includes('manual')){
+      await track.applyConstraints({advanced:[{focusMode:'manual',pointsOfInterest:[{x:x/rect.width,y:y/rect.height}]}]});
+    }
+  }catch(e){}
+});
+
+// ── UI ──
+function showResult(data){ document.getElementById('result-value').textContent=data; document.getElementById('result-area').classList.add('visible'); }
+window.clearResult=()=>document.getElementById('result-area').classList.remove('visible');
+window.copyResult=()=>navigator.clipboard.writeText(document.getElementById('result-value').textContent).then(()=>showToast('已複製到剪貼簿'));
+function setStatus(type,msg){ document.getElementById('sdot').className='status-dot '+type; const t=document.getElementById('status-text'); t.className=type; t.textContent=msg; }
+function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2000); }
+window.showToast=showToast;
+
+document.getElementById('btn-torch').addEventListener('click',toggleTorch);
+document.getElementById('btn-debug-tog').addEventListener('click',()=>{ showDebug=!showDebug; document.getElementById('debug-wrap').classList.toggle('visible',showDebug); document.getElementById('btn-debug-tog').classList.toggle('active',showDebug); });
+document.getElementById('btn-params-tog').addEventListener('click',()=>{ showParams=!showParams; document.getElementById('params-drawer').classList.toggle('visible',showParams); document.getElementById('btn-params-tog').classList.toggle('active',showParams); });
+document.getElementById('btn-history-tog').addEventListener('click',()=>{ showHistory=!showHistory; document.getElementById('history-wrap').classList.toggle('visible',showHistory); document.getElementById('btn-history-tog').classList.toggle('active',showHistory); });
+
+// ── 歷史 ──
+function addHistory(data){
+  const time=new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  history.unshift({data,time}); if(history.length>30) history.pop();
+  try{localStorage.setItem('qr_h',JSON.stringify(history));}catch(e){}
+  renderHistory();
+}
+function renderHistory(){
+  const list=document.getElementById('history-list');
+  if(!history.length){list.innerHTML='<div style="font-size:11px;color:var(--muted);font-family:var(--font-mono)">尚無記錄</div>';return;}
+  list.innerHTML=history.map(h=>`<div class="hi-item" onclick="copyText('${h.data.replace(/'/g,"\\'")}')"><span class="hi-text">${esc(h.data)}</span><span class="hi-time">${h.time}</span></div>`).join('');
+}
+window.clearHistory=()=>{ history=[]; try{localStorage.removeItem('qr_h');}catch(e){} renderHistory(); };
+window.copyText=t=>navigator.clipboard.writeText(t).then(()=>showToast('已複製'));
+function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+document.addEventListener('touchmove',e=>e.preventDefault(),{passive:false});
+</script>
+</body>
+</html>
