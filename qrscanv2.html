@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>雷射條碼掃描器 v2</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --accent: #58a6ff; --accent2: #3fb950; --warn: #f85149;
+    --text: #e6edf3; --muted: #7d8590;
+  }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'SF Mono','Fira Code','Courier New',monospace;
+    min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; padding: 16px 16px 40px;
+  }
+  header {
+    width: 100%; max-width: 480px;
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 16px; padding-top: 8px;
+  }
+  .logo { width:36px; height:36px; background:var(--accent); border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:18px; flex-shrink:0; }
+  header h1 { font-size:15px; font-weight:600; letter-spacing:.02em; }
+  header p  { font-size:11px; color:var(--muted); margin-top:1px; }
+
+  .camera-wrap { width:100%; max-width:480px; position:relative; border-radius:16px; overflow:hidden; border:1px solid var(--border); background:#000; aspect-ratio:1/1; }
+  #preview { width:100%; height:100%; object-fit:cover; display:block; }
+  canvas#overlay { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+  .scan-frame { position:absolute; inset:0; pointer-events:none; }
+  .scan-frame::before { content:''; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:55%; height:55%; border:2px solid var(--accent); border-radius:12px; box-shadow:0 0 0 9999px rgba(0,0,0,.35); }
+  .scan-line { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:55%; height:55%; overflow:hidden; border-radius:12px; pointer-events:none; }
+  .scan-line::after { content:''; position:absolute; left:0; right:0; height:2px; background:linear-gradient(90deg,transparent,rgba(88,166,255,.6),transparent); animation:scan 2s ease-in-out infinite; box-shadow:0 0 8px rgba(88,166,255,.6); }
+  @keyframes scan { 0%{top:0%} 50%{top:calc(100% - 2px)} 100%{top:0%} }
+  .corner { position:absolute; top:50%; left:50%; width:55%; height:55%; transform:translate(-50%,-50%); pointer-events:none; }
+  .corner span { position:absolute; width:20px; height:20px; border-color:var(--accent); border-style:solid; }
+  .corner span:nth-child(1){ top:-1px; left:-1px;   border-width:3px 0 0 3px; border-radius:4px 0 0 0; }
+  .corner span:nth-child(2){ top:-1px; right:-1px;  border-width:3px 3px 0 0; border-radius:0 4px 0 0; }
+  .corner span:nth-child(3){ bottom:-1px; left:-1px; border-width:0 0 3px 3px; border-radius:0 0 0 4px; }
+  .corner span:nth-child(4){ bottom:-1px; right:-1px;border-width:0 3px 3px 0; border-radius:0 0 4px 0; }
+  .status-badge { position:absolute; bottom:12px; left:50%; transform:translateX(-50%); background:rgba(13,17,23,.85); backdrop-filter:blur(8px); border:1px solid var(--border); border-radius:20px; padding:5px 14px; font-size:11px; color:var(--muted); white-space:nowrap; transition:all .3s; }
+  .status-badge.scanning { color:var(--accent);  border-color:var(--accent);  }
+  .status-badge.found    { color:var(--accent2); border-color:var(--accent2); }
+  .status-badge.error    { color:var(--warn);    border-color:var(--warn);    }
+
+  /* debug */
+  .debug-wrap { width:100%; max-width:480px; margin-top:10px; display:none; flex-direction:column; gap:6px; }
+  .debug-wrap.visible { display:flex; }
+  .debug-title { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.1em; }
+  #debug-canvas { width:100%; border-radius:10px; border:1px solid var(--border); image-rendering:pixelated; }
+
+  .btn-row { display:flex; gap:8px; width:100%; max-width:480px; margin-top:12px; flex-wrap:wrap; }
+  button { flex:1; padding:11px 0; border:1px solid var(--border); border-radius:10px; background:var(--surface); color:var(--text); font-family:inherit; font-size:12px; cursor:pointer; transition:background .2s; display:flex; align-items:center; justify-content:center; gap:5px; min-width:68px; }
+  button:active { background:#1c2128; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#0d1117; font-weight:700; }
+  button.primary:active { background:#4493e0; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  button.active-toggle { background:rgba(88,166,255,.15); border-color:var(--accent); color:var(--accent); }
+  #file-input { display:none; }
+
+  /* 參數 */
+  .params-card { width:100%; max-width:480px; margin-top:12px; background:var(--surface); border:1px solid var(--border); border-radius:14px; overflow:hidden; display:none; }
+  .params-card.visible { display:block; }
+  .params-header { padding:10px 14px; border-bottom:1px solid var(--border); font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.1em; }
+  .params-body { padding:14px; display:flex; flex-direction:column; gap:14px; }
+  .param-row { display:flex; align-items:center; gap:10px; }
+  .param-label { font-size:12px; color:var(--text); flex:1; }
+  .param-val { font-size:12px; color:var(--accent); width:46px; text-align:right; flex-shrink:0; }
+  input[type=range] { flex:2; accent-color:var(--accent); -webkit-appearance:none; height:4px; border-radius:2px; background:var(--border); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:16px; height:16px; border-radius:50%; background:var(--accent); cursor:pointer; }
+  .toggle-row { display:flex; align-items:center; justify-content:space-between; }
+  .toggle-label { font-size:12px; color:var(--text); }
+  .toggle { width:40px; height:22px; background:var(--border); border-radius:11px; position:relative; cursor:pointer; transition:background .2s; flex:unset; border:none; padding:0; min-width:40px; }
+  .toggle.on { background:var(--accent2); }
+  .toggle::after { content:''; position:absolute; top:3px; left:3px; width:16px; height:16px; border-radius:50%; background:#fff; transition:left .2s; }
+  .toggle.on::after { left:21px; }
+
+  /* 結果 */
+  .result-card { width:100%; max-width:480px; margin-top:14px; background:var(--surface); border:1px solid var(--border); border-radius:14px; overflow:hidden; display:none; }
+  .result-card.visible { display:block; }
+  .result-header { display:flex; align-items:center; justify-content:space-between; padding:10px 14px; border-bottom:1px solid var(--border); font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.1em; }
+  .result-header .tag { background:rgba(63,185,80,.15); color:var(--accent2); border:1px solid rgba(63,185,80,.3); border-radius:6px; padding:2px 8px; font-size:10px; }
+  .result-body { padding:14px; }
+  .result-text { font-size:15px; font-weight:600; word-break:break-all; color:var(--text); margin-bottom:12px; line-height:1.5; }
+
+  /* 歷史 */
+  .history-section { width:100%; max-width:480px; margin-top:14px; }
+  .history-title { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.1em; margin-bottom:8px; display:flex; align-items:center; justify-content:space-between; }
+  .clear-btn { font-size:11px; color:var(--warn); cursor:pointer; background:none; border:none; padding:0; font-family:inherit; flex:unset; min-width:unset; }
+  .history-list { display:flex; flex-direction:column; gap:6px; }
+  .history-item { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:10px 12px; display:flex; align-items:center; gap:10px; cursor:pointer; transition:border-color .2s; }
+  .history-item:active { border-color:var(--accent); }
+  .history-item .hi-text { flex:1; word-break:break-all; color:var(--text); font-size:13px; }
+  .history-item .hi-time { color:var(--muted); font-size:10px; white-space:nowrap; }
+
+  .toast { position:fixed; bottom:30px; left:50%; transform:translateX(-50%) translateY(80px); background:var(--accent2); color:#0d1117; font-weight:700; font-size:13px; padding:8px 20px; border-radius:20px; transition:transform .3s; pointer-events:none; white-space:nowrap; z-index:999; }
+  .toast.show { transform:translateX(-50%) translateY(0); }
+  .hidden-canvas { display:none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">⬛</div>
+  <div>
+    <h1>雷射條碼掃描器</h1>
+    <p>jsQR · 雷射打標強化版</p>
+  </div>
+</header>
+
+<div class="camera-wrap">
+  <video id="preview" autoplay playsinline muted></video>
+  <canvas id="overlay"></canvas>
+  <div class="scan-frame"></div>
+  <div class="scan-line"></div>
+  <div class="corner"><span></span><span></span><span></span><span></span></div>
+  <div class="status-badge" id="status-badge">點擊「開始掃描」</div>
+</div>
+<canvas id="decode-canvas" class="hidden-canvas"></canvas>
+
+<div class="btn-row">
+  <button class="primary" id="btn-start" onclick="startCamera()">▶ 開始</button>
+  <button id="btn-stop" onclick="stopCamera()" disabled>⏹ 停止</button>
+  <label style="flex:1;display:contents">
+    <button onclick="document.getElementById('file-input').click()">🖼 圖片</button>
+  </label>
+  <input type="file" id="file-input" accept="image/*" onchange="decodeFromFile(event)">
+  <button id="btn-debug" onclick="toggleDebug()">🔍 預覽</button>
+  <button id="btn-params" onclick="toggleParams()">⚙️ 參數</button>
+</div>
+
+<div class="debug-wrap" id="debug-wrap">
+  <div class="debug-title">jsQR 實際處理畫面（二值化後）</div>
+  <canvas id="debug-canvas"></canvas>
+</div>
+
+<div class="params-card" id="params-card">
+  <div class="params-header">掃描參數調整</div>
+  <div class="params-body">
+    <div class="param-row">
+      <span class="param-label">對比度增強</span>
+      <input type="range" id="sl-contrast" min="1" max="5" step="0.1" value="1.5"
+        oninput="params.contrast=+this.value; document.getElementById('v-contrast').textContent=this.value+'x'">
+      <span class="param-val" id="v-contrast">1.5x</span>
+    </div>
+    <div class="param-row">
+      <span class="param-label">全域 Threshold</span>
+      <input type="range" id="sl-thresh" min="40" max="220" value="128"
+        oninput="params.threshold=+this.value; document.getElementById('v-thresh').textContent=this.value">
+      <span class="param-val" id="v-thresh">128</span>
+    </div>
+    <div class="param-row">
+      <span class="param-label">自適應區塊（0=關）</span>
+      <input type="range" id="sl-block" min="0" max="80" step="4" value="0"
+        oninput="params.blockSize=+this.value; document.getElementById('v-block').textContent=this.value||'關'">
+      <span class="param-val" id="v-block">關</span>
+    </div>
+    <div class="toggle-row">
+      <span class="toggle-label">反色嘗試（attemptBoth）</span>
+      <button class="toggle on" id="tog-invert" onclick="params.invert=!params.invert;this.classList.toggle('on',params.invert)"></button>
+    </div>
+    <div class="toggle-row">
+      <span class="toggle-label">只裁切中央 55% 解碼</span>
+      <button class="toggle on" id="tog-crop" onclick="params.cropCenter=!params.cropCenter;this.classList.toggle('on',params.cropCenter)"></button>
+    </div>
+  </div>
+</div>
+
+<div class="result-card" id="result-card">
+  <div class="result-header">
+    <span>掃描結果</span><span class="tag">✓ 成功</span>
+  </div>
+  <div class="result-body">
+    <div class="result-text" id="result-text"></div>
+    <div class="btn-row" style="margin-top:0">
+      <button onclick="copyResult()">📋 複製</button>
+      <button onclick="clearResult()">✕ 清除</button>
+    </div>
+  </div>
+</div>
+
+<div class="history-section" id="history-section" style="display:none">
+  <div class="history-title">
+    <span>掃描歷史</span>
+    <button class="clear-btn" onclick="clearHistory()">全部清除</button>
+  </div>
+  <div class="history-list" id="history-list"></div>
+</div>
+
+<div class="toast" id="toast">已複製</div>
+
+<script>
+const params = { threshold:128, blockSize:0, contrast:1.5, invert:true, cropCenter:true };
+
+let stream=null, animFrame=null, scanning=false, showDebug=false;
+let history=[];
+try { history=JSON.parse(localStorage.getItem('qr_history')||'[]'); } catch(e){}
+
+const video   = document.getElementById('preview');
+const overlay = document.getElementById('overlay');
+const ctx     = overlay.getContext('2d');
+const dc      = document.getElementById('decode-canvas');
+const dctx    = dc.getContext('2d');
+const debugC  = document.getElementById('debug-canvas');
+const debugCtx= debugC.getContext('2d');
+const badge   = document.getElementById('status-badge');
+
+renderHistory();
+
+async function startCamera() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1920} }
+    });
+    video.srcObject = stream;
+    await video.play();
+    scanning = true;
+    document.getElementById('btn-start').disabled = true;
+    document.getElementById('btn-stop').disabled  = false;
+    setStatus('scanning','掃描中…');
+    requestAnimationFrame(tick);
+  } catch(e) { setStatus('error','相機錯誤：'+e.message); }
+}
+
+function stopCamera() {
+  scanning = false;
+  if (stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+  cancelAnimationFrame(animFrame);
+  ctx.clearRect(0,0,overlay.width,overlay.height);
+  document.getElementById('btn-start').disabled = false;
+  document.getElementById('btn-stop').disabled  = true;
+  setStatus('','點擊「開始掃描」');
+}
+
+function tick() {
+  if (!scanning) return;
+  if (video.readyState === video.HAVE_ENOUGH_DATA) {
+    const vw=video.videoWidth, vh=video.videoHeight;
+    let sx=0,sy=0,sw=vw,sh=vh;
+    if (params.cropCenter){ sx=vw*.225; sy=vh*.225; sw=vw*.55; sh=vh*.55; }
+    dc.width=sw; dc.height=sh;
+    dctx.drawImage(video, sx,sy,sw,sh, 0,0,sw,sh);
+    const imgData = dctx.getImageData(0,0,sw,sh);
+    preprocess(imgData);
+    dctx.putImageData(imgData,0,0);
+    if (showDebug){
+      debugC.width=sw; debugC.height=sh;
+      debugCtx.putImageData(imgData,0,0);
+    }
+    const inv = params.invert ? 'attemptBoth' : 'dontInvert';
+    const code = jsQR(imgData.data, sw, sh, {inversionAttempts:inv});
+    if (code){ onFound(code.data); return; }
+    ctx.clearRect(0,0,overlay.width,overlay.height);
+  }
+  animFrame = requestAnimationFrame(tick);
+}
+
+function preprocess(imgData) {
+  const d=imgData.data, w=imgData.width, h=imgData.height;
+  const c=params.contrast, mid=128;
+  // 灰階 + 對比度
+  for (let i=0;i<d.length;i+=4){
+    let g = 0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+    g = Math.min(255,Math.max(0,(g-mid)*c+mid));
+    d[i]=d[i+1]=d[i+2]=g;
+  }
+  // 二值化
+  if (params.blockSize>=4){
+    adaptiveThreshold(d,w,h,params.blockSize);
+  } else {
+    const t=params.threshold;
+    for (let i=0;i<d.length;i+=4){
+      const v=d[i]>=t?255:0;
+      d[i]=d[i+1]=d[i+2]=v;
+    }
+  }
+}
+
+function adaptiveThreshold(d,w,h,blockSize){
+  const half=Math.floor(blockSize/2);
+  const integral=new Float32Array((w+1)*(h+1));
+  for (let y=0;y<h;y++){
+    for (let x=0;x<w;x++){
+      const g=d[(y*w+x)*4];
+      integral[(y+1)*(w+1)+(x+1)] = g
+        +integral[y*(w+1)+(x+1)]
+        +integral[(y+1)*(w+1)+x]
+        -integral[y*(w+1)+x];
+    }
+  }
+  for (let y=0;y<h;y++){
+    for (let x=0;x<w;x++){
+      const x1=Math.max(0,x-half), y1=Math.max(0,y-half);
+      const x2=Math.min(w-1,x+half), y2=Math.min(h-1,y+half);
+      const count=(x2-x1+1)*(y2-y1+1);
+      const sum=integral[(y2+1)*(w+1)+(x2+1)]
+               -integral[y1*(w+1)+(x2+1)]
+               -integral[(y2+1)*(w+1)+x1]
+               +integral[y1*(w+1)+x1];
+      const idx=(y*w+x)*4;
+      d[idx]=d[idx+1]=d[idx+2]=(d[idx]<sum/count*0.85)?0:255;
+    }
+  }
+}
+
+function onFound(data){
+  scanning=false; stopCamera();
+  setStatus('found','✓ 解碼成功');
+  showResult(data); addHistory(data);
+  if(navigator.vibrate) navigator.vibrate(60);
+}
+
+function decodeFromFile(event){
+  const file=event.target.files[0]; if(!file) return;
+  const img=new Image(), url=URL.createObjectURL(file);
+  img.onload=()=>{
+    dc.width=img.width; dc.height=img.height;
+    dctx.drawImage(img,0,0);
+    const imgData=dctx.getImageData(0,0,img.width,img.height);
+    preprocess(imgData); dctx.putImageData(imgData,0,0);
+    URL.revokeObjectURL(url);
+    if(showDebug){
+      debugC.width=img.width; debugC.height=img.height;
+      debugCtx.putImageData(imgData,0,0);
+      document.getElementById('debug-wrap').classList.add('visible');
+    }
+    const inv=params.invert?'attemptBoth':'dontInvert';
+    const code=jsQR(imgData.data,img.width,img.height,{inversionAttempts:inv});
+    if(code){ setStatus('found','✓ 圖片解碼成功'); showResult(code.data); addHistory(code.data); }
+    else     { setStatus('error','未偵測到 QR code，請調整參數後重試'); }
+  };
+  img.src=url; event.target.value='';
+}
+
+function showResult(data){ document.getElementById('result-text').textContent=data; document.getElementById('result-card').classList.add('visible'); }
+function clearResult(){ document.getElementById('result-card').classList.remove('visible'); }
+function copyResult(){ navigator.clipboard.writeText(document.getElementById('result-text').textContent).then(()=>showToast('已複製到剪貼簿')); }
+function setStatus(type,msg){ badge.textContent=msg; badge.className='status-badge '+type; }
+function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2000); }
+function toggleDebug(){ showDebug=!showDebug; document.getElementById('debug-wrap').classList.toggle('visible',showDebug); document.getElementById('btn-debug').classList.toggle('active-toggle',showDebug); }
+function toggleParams(){ document.getElementById('params-card').classList.toggle('visible'); document.getElementById('btn-params').classList.toggle('active-toggle'); }
+
+function addHistory(data){
+  const time=new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
+  history.unshift({data,time}); if(history.length>20) history.pop();
+  try{localStorage.setItem('qr_history',JSON.stringify(history));}catch(e){}
+  renderHistory();
+}
+function renderHistory(){
+  const list=document.getElementById('history-list'), section=document.getElementById('history-section');
+  if(!history.length){section.style.display='none';return;}
+  section.style.display='block';
+  list.innerHTML=history.map(h=>`<div class="history-item" onclick="copyText('${h.data.replace(/'/g,"\\'")}')"><span class="hi-text">${escHtml(h.data)}</span><span class="hi-time">${h.time}</span></div>`).join('');
+}
+function clearHistory(){ history=[]; try{localStorage.removeItem('qr_history');}catch(e){} renderHistory(); }
+function copyText(text){ navigator.clipboard.writeText(text).then(()=>showToast('已複製')); }
+function escHtml(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+</script>
+</body>
+</html>
