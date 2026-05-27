@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>雷射條碼掃描器</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --accent: #58a6ff;
+    --accent2: #3fb950;
+    --warn: #f85149;
+    --text: #e6edf3;
+    --muted: #7d8590;
+    --scan-line: rgba(88, 166, 255, 0.6);
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px;
+    padding-bottom: 32px;
+  }
+
+  header {
+    width: 100%;
+    max-width: 480px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 20px;
+    padding-top: 8px;
+  }
+
+  .logo {
+    width: 36px;
+    height: 36px;
+    background: var(--accent);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+
+  header h1 {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: 0.02em;
+  }
+
+  header p {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 1px;
+  }
+
+  /* ── 相機區塊 ── */
+  .camera-wrap {
+    width: 100%;
+    max-width: 480px;
+    position: relative;
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: #000;
+    aspect-ratio: 1 / 1;
+  }
+
+  #preview {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  canvas#overlay {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+
+  /* 掃描框 */
+  .scan-frame {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  .scan-frame::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 55%;
+    height: 55%;
+    border: 2px solid var(--accent);
+    border-radius: 12px;
+    box-shadow: 0 0 0 9999px rgba(0,0,0,0.35);
+  }
+
+  /* 掃描動畫線 */
+  .scan-line {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 55%;
+    height: 55%;
+    overflow: hidden;
+    border-radius: 12px;
+    pointer-events: none;
+  }
+
+  .scan-line::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--scan-line), transparent);
+    animation: scan 2s ease-in-out infinite;
+    box-shadow: 0 0 8px var(--scan-line);
+  }
+
+  @keyframes scan {
+    0%   { top: 0%; }
+    50%  { top: calc(100% - 2px); }
+    100% { top: 0%; }
+  }
+
+  /* 角標 */
+  .corner {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 55%;
+    height: 55%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+
+  .corner span {
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    border-color: var(--accent);
+    border-style: solid;
+  }
+
+  .corner span:nth-child(1) { top: -1px; left: -1px; border-width: 3px 0 0 3px; border-radius: 4px 0 0 0; }
+  .corner span:nth-child(2) { top: -1px; right: -1px; border-width: 3px 3px 0 0; border-radius: 0 4px 0 0; }
+  .corner span:nth-child(3) { bottom: -1px; left: -1px; border-width: 0 0 3px 3px; border-radius: 0 0 0 4px; }
+  .corner span:nth-child(4) { bottom: -1px; right: -1px; border-width: 0 3px 3px 0; border-radius: 0 0 4px 0; }
+
+  /* 狀態標籤 */
+  .status-badge {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(13, 17, 23, 0.85);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 5px 14px;
+    font-size: 11px;
+    color: var(--muted);
+    white-space: nowrap;
+    transition: all 0.3s;
+  }
+
+  .status-badge.scanning { color: var(--accent); border-color: var(--accent); }
+  .status-badge.found    { color: var(--accent2); border-color: var(--accent2); }
+  .status-badge.error    { color: var(--warn); border-color: var(--warn); }
+
+  /* ── 按鈕 ── */
+  .btn-row {
+    display: flex;
+    gap: 10px;
+    width: 100%;
+    max-width: 480px;
+    margin-top: 14px;
+  }
+
+  button {
+    flex: 1;
+    padding: 12px 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+
+  button:active { background: #1c2128; }
+
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #0d1117;
+    font-weight: 700;
+  }
+
+  button.primary:active { background: #4493e0; }
+
+  button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* 上傳按鈕 */
+  #file-input { display: none; }
+
+  /* ── 結果區 ── */
+  .result-card {
+    width: 100%;
+    max-width: 480px;
+    margin-top: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    display: none;
+  }
+
+  .result-card.visible { display: block; }
+
+  .result-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  .result-header .tag {
+    background: rgba(63, 185, 80, 0.15);
+    color: var(--accent2);
+    border: 1px solid rgba(63, 185, 80, 0.3);
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 10px;
+  }
+
+  .result-body {
+    padding: 14px;
+  }
+
+  .result-text {
+    font-size: 15px;
+    font-weight: 600;
+    word-break: break-all;
+    color: var(--text);
+    margin-bottom: 12px;
+    line-height: 1.5;
+  }
+
+  /* 歷史記錄 */
+  .history-section {
+    width: 100%;
+    max-width: 480px;
+    margin-top: 16px;
+  }
+
+  .history-title {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .clear-btn {
+    font-size: 11px;
+    color: var(--warn);
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
+    font-family: inherit;
+    flex: unset;
+  }
+
+  .history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .history-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    transition: border-color 0.2s;
+  }
+
+  .history-item:active { border-color: var(--accent); }
+
+  .history-item .hi-text {
+    flex: 1;
+    word-break: break-all;
+    color: var(--text);
+    font-size: 13px;
+  }
+
+  .history-item .hi-time {
+    color: var(--muted);
+    font-size: 10px;
+    white-space: nowrap;
+  }
+
+  .toast {
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%) translateY(80px);
+    background: var(--accent2);
+    color: #0d1117;
+    font-weight: 700;
+    font-size: 13px;
+    padding: 8px 20px;
+    border-radius: 20px;
+    transition: transform 0.3s ease;
+    pointer-events: none;
+    white-space: nowrap;
+    z-index: 999;
+  }
+
+  .toast.show { transform: translateX(-50%) translateY(0); }
+
+  .hidden-canvas { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">⬛</div>
+  <div>
+    <h1>雷射條碼掃描器</h1>
+    <p>jsQR · iOS 相容版</p>
+  </div>
+</header>
+
+<!-- 相機 -->
+<div class="camera-wrap" id="camera-wrap">
+  <video id="preview" autoplay playsinline muted></video>
+  <canvas id="overlay"></canvas>
+  <div class="scan-frame"></div>
+  <div class="scan-line"></div>
+  <div class="corner">
+    <span></span><span></span><span></span><span></span>
+  </div>
+  <div class="status-badge" id="status-badge">點擊「開始掃描」</div>
+</div>
+
+<!-- 隱藏用 canvas（decode 用） -->
+<canvas id="decode-canvas" class="hidden-canvas"></canvas>
+
+<!-- 按鈕列 -->
+<div class="btn-row">
+  <button class="primary" id="btn-start" onclick="startCamera()">▶ 開始掃描</button>
+  <button id="btn-stop" onclick="stopCamera()" disabled>⏹ 停止</button>
+  <label for="file-input">
+    <button onclick="document.getElementById('file-input').click()">🖼 圖片</button>
+  </label>
+  <input type="file" id="file-input" accept="image/*" onchange="decodeFromFile(event)">
+</div>
+
+<!-- 結果 -->
+<div class="result-card" id="result-card">
+  <div class="result-header">
+    <span>掃描結果</span>
+    <span class="tag">✓ 成功</span>
+  </div>
+  <div class="result-body">
+    <div class="result-text" id="result-text"></div>
+    <div class="btn-row" style="margin-top:0">
+      <button onclick="copyResult()">📋 複製</button>
+      <button onclick="clearResult()">✕ 清除</button>
+    </div>
+  </div>
+</div>
+
+<!-- 歷史 -->
+<div class="history-section" id="history-section" style="display:none">
+  <div class="history-title">
+    <span>掃描歷史</span>
+    <button class="clear-btn" onclick="clearHistory()">全部清除</button>
+  </div>
+  <div class="history-list" id="history-list"></div>
+</div>
+
+<div class="toast" id="toast">已複製到剪貼簿</div>
+
+<script>
+let stream = null;
+let animFrame = null;
+let scanning = false;
+let history = JSON.parse(localStorage.getItem('qr_history') || '[]');
+
+const video = document.getElementById('preview');
+const overlay = document.getElementById('overlay');
+const ctx = overlay.getContext('2d');
+const decodeCanvas = document.getElementById('decode-canvas');
+const dctx = decodeCanvas.getContext('2d');
+const badge = document.getElementById('status-badge');
+
+renderHistory();
+
+async function startCamera() {
+  try {
+    const constraints = {
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1280 },
+        height: { ideal: 1280 }
+      }
+    };
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+    video.srcObject = stream;
+    video.play();
+    scanning = true;
+    document.getElementById('btn-start').disabled = true;
+    document.getElementById('btn-stop').disabled = false;
+    setStatus('scanning', '掃描中…');
+    requestAnimationFrame(tick);
+  } catch (e) {
+    setStatus('error', '無法存取相機：' + e.message);
+  }
+}
+
+function stopCamera() {
+  scanning = false;
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop());
+    stream = null;
+  }
+  cancelAnimationFrame(animFrame);
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  document.getElementById('btn-start').disabled = false;
+  document.getElementById('btn-stop').disabled = true;
+  setStatus('', '點擊「開始掃描」');
+}
+
+function tick() {
+  if (!scanning) return;
+  if (video.readyState === video.HAVE_ENOUGH_DATA) {
+    const w = video.videoWidth;
+    const h = video.videoHeight;
+    decodeCanvas.width = w;
+    decodeCanvas.height = h;
+    overlay.width = overlay.offsetWidth;
+    overlay.height = overlay.offsetHeight;
+    dctx.drawImage(video, 0, 0, w, h);
+    const imageData = dctx.getImageData(0, 0, w, h);
+    const code = jsQR(imageData.data, w, h, { inversionAttempts: 'dontInvert' });
+    if (code) {
+      drawBox(code.location);
+      onFound(code.data);
+      return;
+    } else {
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
+    }
+  }
+  animFrame = requestAnimationFrame(tick);
+}
+
+function drawBox(loc) {
+  const vw = video.offsetWidth;
+  const vh = video.offsetHeight;
+  const scaleX = vw / video.videoWidth;
+  const scaleY = vh / video.videoHeight;
+  overlay.width = vw;
+  overlay.height = vh;
+  ctx.strokeStyle = '#3fb950';
+  ctx.lineWidth = 3;
+  ctx.shadowColor = '#3fb950';
+  ctx.shadowBlur = 8;
+  ctx.beginPath();
+  ctx.moveTo(loc.topLeftCorner.x * scaleX, loc.topLeftCorner.y * scaleY);
+  ctx.lineTo(loc.topRightCorner.x * scaleX, loc.topRightCorner.y * scaleY);
+  ctx.lineTo(loc.bottomRightCorner.x * scaleX, loc.bottomRightCorner.y * scaleY);
+  ctx.lineTo(loc.bottomLeftCorner.x * scaleX, loc.bottomLeftCorner.y * scaleY);
+  ctx.closePath();
+  ctx.stroke();
+}
+
+function onFound(data) {
+  scanning = false;
+  stopCamera();
+  setStatus('found', '✓ 解碼成功');
+  showResult(data);
+  addHistory(data);
+  vibrate();
+}
+
+function showResult(data) {
+  document.getElementById('result-text').textContent = data;
+  document.getElementById('result-card').classList.add('visible');
+}
+
+function clearResult() {
+  document.getElementById('result-card').classList.remove('visible');
+}
+
+function copyResult() {
+  const text = document.getElementById('result-text').textContent;
+  navigator.clipboard.writeText(text).then(() => showToast('已複製到剪貼簿'));
+}
+
+function addHistory(data) {
+  const now = new Date();
+  const time = now.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
+  history.unshift({ data, time });
+  if (history.length > 20) history.pop();
+  localStorage.setItem('qr_history', JSON.stringify(history));
+  renderHistory();
+}
+
+function renderHistory() {
+  const list = document.getElementById('history-list');
+  const section = document.getElementById('history-section');
+  if (history.length === 0) { section.style.display = 'none'; return; }
+  section.style.display = 'block';
+  list.innerHTML = history.map((h, i) => `
+    <div class="history-item" onclick="copyText('${h.data.replace(/'/g,"\\'")}')">
+      <span class="hi-text">${escHtml(h.data)}</span>
+      <span class="hi-time">${h.time}</span>
+    </div>
+  `).join('');
+}
+
+function clearHistory() {
+  history = [];
+  localStorage.removeItem('qr_history');
+  renderHistory();
+}
+
+function copyText(text) {
+  navigator.clipboard.writeText(text).then(() => showToast('已複製'));
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// 上傳圖片解碼
+function decodeFromFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const img = new Image();
+  const url = URL.createObjectURL(file);
+  img.onload = () => {
+    decodeCanvas.width = img.width;
+    decodeCanvas.height = img.height;
+    dctx.drawImage(img, 0, 0);
+    const imageData = dctx.getImageData(0, 0, img.width, img.height);
+    const code = jsQR(imageData.data, img.width, img.height);
+    URL.revokeObjectURL(url);
+    if (code) {
+      setStatus('found', '✓ 圖片解碼成功');
+      showResult(code.data);
+      addHistory(code.data);
+    } else {
+      setStatus('error', '圖片中未偵測到 QR code');
+    }
+  };
+  img.src = url;
+  event.target.value = '';
+}
+
+function setStatus(type, msg) {
+  badge.textContent = msg;
+  badge.className = 'status-badge ' + type;
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+function vibrate() {
+  if (navigator.vibrate) navigator.vibrate(60);
+}
+</script>
+</body>
+</html>
